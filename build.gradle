@@ -5,7 +5,7 @@ plugins {
     // Download task
     id "de.undercouch.download" version "5.7.0"
 	// Official Azure Functions Gradle plugin: azureFunctionsRun / azureFunctionsDeploy
-	id "com.microsoft.azure.azurefunctions" version "1.16.1"
+	id "com.microsoft.azure.azurefunctions" version "1.17.0"
 }
 
 /**
