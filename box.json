@@ -1,0 +1,33 @@
+{
+	"name": "MyAzureFunctionProject",
+	"author": "You",
+	"homepage": "https://github.com/ortus-boxlang/myazurefunction-project",
+	"documentation": "https://github.com/ortus-boxlang/myazurefunction-project",
+	"repository": {
+		"type": "git",
+		"URL": "https://github.com/ortus-boxlang/myazurefunction-project"
+	},
+	"bugs": "https://github.com/ortus-boxlang/myazurefunction-project/issues",
+	"shortDescription": "Module template for BoxLang Azure Function Projects",
+	"type": "projects",
+	"keywords": [
+		"boxlang",
+		"azure functions"
+	],
+	"private": false,
+	"devDependencies": {
+		"commandbox-cfformat": "*",
+		"commandbox-boxlang": "*",
+		"testbox": "*"
+	},
+	"ignore": [
+		"**/.*",
+		"settings.gradle",
+		"gradlew.bat",
+		"gradlew",
+		"build.gradle",
+		"/src/**",
+		"gradle/**"
+	],
+	"scripts": {}
+}

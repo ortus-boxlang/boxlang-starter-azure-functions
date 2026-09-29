@@ -1,0 +1,36 @@
+/**
+ * My BoxLang Azure Function
+ *
+ * - The <code>run()</code> function is by convention the entry point
+ * - You can create other functions and use the `x-bx-function` header to call them
+ * - This file is named "Lambda.bx" by convention: the same default handler name is used
+ *   across the AWS, Google Cloud, and Azure BoxLang runtimes, so a project's code can move
+ *   between providers unmodified.
+ *
+ * <h2>Arguments</h2>
+ *
+ * - event: The event struct that triggered the function (method, path, headers, body,
+ *   queryStringParameters, requestContext.http, etc.) - the same shape across all three runtimes.
+ * - context: The Azure runtime context struct: functionName, invocationId, requestId.
+ * - response: The response object that will be returned to the caller which always has a standard structure:
+ *  - statusCode: The HTTP status code, 200 default
+ *  - headers: The HTTP headers map/struct
+ *  - body: The response body, or empty. This is for you to add your response data as you see fit.
+ *  - cookies: An array of outgoing cookies (if any)
+ *  - Any other property you add will be returned as well
+ */
+class{
+
+	function run( event, context, response ){
+		response.body = {
+			"error": false,
+			"messages": [],
+			"data": "====> Incoming event " & event.toString()
+		}
+		response.statusCode = 200
+	}
+
+	function anotherLambda( event, context, response ){
+		return "Hola!!"
+	}
+}

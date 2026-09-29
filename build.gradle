@@ -1,0 +1,240 @@
+plugins {
+    id 'java'
+	// For source code formatting
+	id "com.diffplug.spotless" version "8.10.1"
+    // Download task
+    id "de.undercouch.download" version "5.7.0"
+	// Official Azure Functions Gradle plugin: azureFunctionsRun / azureFunctionsDeploy
+	id "com.microsoft.azure.azurefunctions" version "1.16.1"
+}
+
+/**
+ * Project Properties
+ */
+ext {
+	buildID = System.getenv( 'BUILD_ID' ) ?: '0'
+	branch = System.getenv( 'BRANCH' ) ?: 'development'
+}
+
+if ( branch == 'development' ) {
+    // If the branch is 'development', ensure the version ends with '-snapshot'
+    // This replaces any existing prerelease identifier with '-snapshot'
+    version = version.contains('-') ? version.replaceAll(/-.*/, '-snapshot') : "${version}-snapshot"
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+dependencies {
+	// Includes BoxLang + SLF4J + Azure Functions Java Library
+	implementation 'io.boxlang:boxlang-azure-functions:' + boxlangVersion
+
+    // Use only one SLF4J implementation to avoid warnings
+	testImplementation( 'org.slf4j:slf4j-nop:2.0.18' ) {
+		// Exclude to avoid conflicts with BoxLang's SLF4J binding
+		exclude group: 'org.slf4j', module: 'slf4j-api'
+	}
+
+	// Testing Frameworks
+    testImplementation "org.junit.jupiter:junit-jupiter:6.+"
+	testImplementation "org.mockito:mockito-core:5.+"
+	testImplementation "com.google.truth:truth:1.+"
+	// Explicitly declare the JUnit platform launcher (to avoid deprecation)
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+java {
+	sourceCompatibility = JavaVersion.toVersion( jdkVersion )
+	targetCompatibility = JavaVersion.toVersion( jdkVersion )
+}
+
+compileJava {
+	// Compiler Options
+	options.incremental = true
+	options.encoding = 'UTF-8'
+	options.debug = true
+}
+
+compileTestJava {
+}
+
+test {
+	dependsOn 'generateManifest'
+    useJUnitPlatform()
+    testLogging {
+		showStandardStreams = true
+	}
+}
+
+jar {
+    archiveVersion =  "${version}"
+ 	manifest {
+	   attributes 'Description': 'My BoxLang Azure Functions Runtime'
+    }
+}
+
+/**
+ * The official Azure Functions plugin stages host.json + this project's BoxLang
+ * class + all runtime dependencies (including the boxlang-azure-functions jar)
+ * into a deployable package - no shadow/fat-jar step needed. Deployment settings
+ * are read from environment variables so CI/CD and local devs never hard-code them.
+ */
+azurefunctions {
+	subscription = System.getenv( "AZURE_SUBSCRIPTION_ID" )
+	resourceGroup = System.getenv( "AZURE_RESOURCE_GROUP" )
+	appName = System.getenv( "AZURE_FUNCTION_APP_NAME" )
+	region = System.getenv( "AZURE_REGION" ) ?: "eastus"
+	pricingTier = System.getenv( "AZURE_PRICING_TIER" ) ?: "Consumption"
+	runtime {
+		os = "linux"
+		javaVersion = "21"
+	}
+	appSettings {
+		BOXLANG_AZURE_DEBUGMODE = System.getenv( "BOXLANG_AZURE_DEBUGMODE" ) ?: "false"
+	}
+	allowTelemetry = false
+}
+
+// Regenerate manifest.json before packaging/running/deploying so it can never drift
+tasks.matching { it.name in [ 'azureFunctionsPackage', 'azureFunctionsPackageZip', 'azureFunctionsRun', 'azureFunctionsDeploy' ] }.configureEach {
+	dependsOn 'generateManifest'
+}
+
+/**
+ * Generate manifest.json from src/main/bx/handlers/ so the runtime never has to
+ * scan the filesystem for routable handlers at cold start - it just reads this
+ * file. Regenerated automatically before packaging, running, and deploying, so
+ * it can never silently drift from what's actually in handlers/.
+ *
+ * Directory segments become route-key segments as-is, lowercased; only the leaf
+ * .bx filename is expected to be PascalCase. handlers/api/Test.bx -> "api/test".
+ */
+task generateManifest {
+	description = 'Generates manifest.json from src/main/bx/handlers/'
+
+	def handlersDir	= file( 'src/main/bx/handlers' )
+	def outputFile		= file( 'src/main/bx/manifest.json' )
+
+	inputs.files( fileTree( handlersDir ) { include '**/*.bx' } ).skipWhenEmpty( false )
+	outputs.file( outputFile )
+
+	doLast {
+		def handlers = [:]
+
+		def scan
+		scan = { File dir, String prefix ->
+			dir.eachFile { entry ->
+				if ( entry.isDirectory() ) {
+					def subPrefix = prefix ? "${prefix}/${entry.name.toLowerCase()}" : entry.name.toLowerCase()
+					scan( entry, subPrefix )
+				} else if ( entry.name.toLowerCase().endsWith( '.bx' ) ) {
+					def fileKey		= entry.name[ 0..-4 ].toLowerCase()
+					def routeKey	= prefix ? "${prefix}/${fileKey}" : fileKey
+					def relative	= handlersDir.toPath().relativize( entry.toPath() ).toString().replace( File.separator, '/' )
+					handlers[ routeKey ] = relative
+				}
+			}
+		}
+
+		if ( handlersDir.exists() ) {
+			scan( handlersDir, '' )
+		}
+
+		def handlersJson = handlers.collect { key, path ->
+			"\t\t\"${key}\": { \"file\": \"handlers/${path}\" }"
+		}.join( ",\n" )
+
+		outputFile.parentFile.mkdirs()
+		outputFile.text = """{
+	"manifestVersion": 1,
+	"generatedAt": "${java.time.Instant.now()}",
+	"generator": "boxlang-starter-azure-functions-gradle",
+	"defaultHandler": { "file": "Lambda.bx", "method": "run" },
+	"handlers": {
+${handlersJson}
+	},
+	"reserved": ["Application.bx", "Lambda.bx"]
+}
+"""
+		println "📋 Generated manifest.json with ${handlers.size()} handler(s): ${handlers.keySet()}"
+	}
+}
+
+/**
+ * Task to download the latest BoxLang Azure Functions runtime jar
+ * You can also move this to maven if you want.
+ */
+task downloadBoxLang( type: Download ) {
+	dependsOn( 'processTestResources' )
+	// Create the destination directory
+	doFirst {
+		file( "src/resources/libs" ).mkdirs()
+	}
+
+    // Configure the URL of the file to download
+	src "https://s3.amazonaws.com/downloads.ortussolutions.com/ortussolutions/boxlang-runtimes/boxlang-azure-functions/${boxlangVersion}/boxlang-azure-functions-${boxlangVersion}.jar"
+
+	// Specify the destination directory for the downloaded file
+    dest "src/resources/libs/boxlang-azure-functions-${boxlangVersion}.jar"
+    overwrite true
+    onlyIfModified false
+}
+
+/**
+ * Project Wide Helper function
+ * This is not a task, but a reusable UDF
+ */
+project.ext.bumpVersion = { boolean major = false, boolean minor = false, boolean patch = false ->
+
+	def propertiesFile = file( './gradle.properties' );
+	def properties = new Properties();
+
+	properties.load( propertiesFile.newDataInputStream() )
+	def versionTarget = major ? 0 : minor ? 1 : 2
+
+	def currentVersion = properties.getProperty( 'version' )
+	def versionParts = currentVersion.split( '\\.' )
+	def newPathVersion = versionParts[ versionTarget ].toInteger() + 1
+	def newVersion = '';
+
+	if( patch ){
+		newVersion = "${versionParts[ 0 ]}.${versionParts[ 1 ]}.${newPathVersion}"
+	} else if( minor ){
+		newVersion = "${versionParts[ 0 ]}.${newPathVersion}.0"
+	} else if( major ){
+		newVersion = "${newPathVersion}.0.0"
+	}
+
+	properties.setProperty( 'version', newVersion )
+	properties.store( propertiesFile.newWriter(), null )
+
+	println "Bumped version from ${currentVersion} to ${newVersion}"
+}
+/**
+ * Bump the major version number
+ */
+task bumpMajorVersion {
+	doLast{
+		bumpVersion( true )
+	}
+}
+
+/**
+ * Bump the minor version number
+ */
+task bumpMinorVersion {
+	doLast{
+		bumpVersion( false, true )
+	}
+}
+
+/**
+ * Bump the patch version number
+ */
+task bumpPatchVersion {
+	doLast{
+		bumpVersion( false, false, true )
+	}
+}
