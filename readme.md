@@ -79,6 +79,10 @@ class {
 
 `./gradlew generateManifest` scans `handlers/` and writes `src/main/bx/manifest.json` — it's wired via `dependsOn` into `test`, `azureFunctionsRun`, `azureFunctionsPackage`, and `azureFunctionsDeploy`, so it's always regenerated fresh and can never silently drift. `manifest.json` is gitignored, never hand-edited or committed.
 
+If `manifest.json` is ever missing or invalid, the runtime falls back to scanning `handlers/` directly, and if that directory doesn't exist either, to scanning the function root for backward compatibility with pre-`handlers/` deployments; set `BOXLANG_ENABLE_ROOT_SCAN=false` to disable that last-resort scan entirely and restrict routing to the default `Lambda.bx` handler only.
+
+`manifest.json`'s `reserved` and `defaultHandler` fields are enforced by the runtime, not just documentation - a manifest can never route to a reserved file (`Application.bx`, `Lambda.bx`, or anything else it lists), and `defaultHandler.file`/`method` is honored as the fallback handler for unmatched routes when present.
+
 ## 🧑‍💻 The `Function.java` wrapper
 
 Unlike AWS Lambda or Google Cloud Functions, Azure's build plugins only scan **your own project's compiled classes** for `@FunctionName` methods when generating `function.json` — they never look inside dependency jars. Since the actual routing/execution logic lives in the `boxlang-azure-functions` runtime dependency, this template includes a two-line wrapper class (`src/main/java/com/myproject/Function.java`) that carries the `@FunctionName`/`@HttpTrigger` annotations and forwards every request straight to `AzureFunctionRunner`. You should never need to touch this file — add BoxLang code under `handlers/` instead.
